@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+import hallucination_risk_meter as hrm
 from hallucination_risk_meter import RiskScore, score
+from hallucination_risk_meter.score import SIGNAL_WEIGHTS
 
 
 def test_low_risk_short_answer_with_context_and_citations():
@@ -53,7 +55,9 @@ def test_unsourced_named_entities_flag_uncited_people():
 
 def test_named_entity_present_in_context_does_not_flag():
     answer = "Marie Curie discovered radium."
-    ctx = "Marie Curie was a Polish-French physicist who discovered polonium and radium."
+    ctx = (
+        "Marie Curie was a Polish-French physicist who discovered polonium and radium."
+    )
     # Citations not provided -> no_citations may fire, but entity should not.
     r = score(answer, context=ctx, citations=[{"id": "1"}])
     assert "unsourced_named_entities" not in r.signals
@@ -120,3 +124,35 @@ def test_none_answer_treated_as_empty():
     r = score(None)  # type: ignore[arg-type]
     assert r.score == 0.0
     assert r.severity == "low"
+
+
+def test_citations_accept_non_sized_iterable():
+    # A generator has no __len__; the count path must still suppress
+    # ``no_citations`` when citations are present.
+    def gen():
+        yield {"id": "1"}
+        yield {"id": "2"}
+
+    r = score("The Eiffel Tower is in Paris.", citations=gen())
+    assert "no_citations" not in r.signals
+
+
+def test_unknown_signal_contributes_zero_weight():
+    # Unknown names are recorded but add nothing to the score.
+    r = score("hi how are you", signals=["totally_unknown_signal"])
+    assert "totally_unknown_signal" in r.signals
+    assert r.score == 0.0
+
+
+def test_score_clamped_to_one_with_all_real_signals():
+    # The built-in weights sum to > 1.0, so a fully-stacked answer must clamp.
+    assert sum(SIGNAL_WEIGHTS.values()) > 1.0
+    all_real = list(SIGNAL_WEIGHTS)
+    r = score("placeholder", signals=all_real)
+    assert r.score == 1.0
+    assert r.severity == "high"
+
+
+def test_version_is_exposed():
+    assert hrm.VERSION == hrm.__version__
+    assert isinstance(hrm.VERSION, str)
